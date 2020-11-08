@@ -6,6 +6,12 @@
 //  Copyright © 2020 Taylor Howard. All rights reserved.
 //
 
+
+//TODO: Implement favorites
+//TODO: Creative portion: 1. allow for favorites offline, 2. pagination? 3. ???
+//TODO: Context menu
+//TODO: Fix collection view cell movie labels - add a parent uiview to label
+
 import UIKit
 
 enum APIError: Error {
@@ -14,6 +20,8 @@ enum APIError: Error {
 }
 class MovieCollectionViewCell: UICollectionViewCell {
     @IBOutlet weak var posterImageView: UIImageView!
+    @IBOutlet weak var movieLabel: UILabel!
+    
 }
 
 class MoviesViewController: UIViewController {
@@ -24,6 +32,7 @@ class MoviesViewController: UIViewController {
     let apiKey = "api_key=d5d50f98654e01d24371f44ad6fa09ee"
     let apiBaseURL = "https://api.themoviedb.org/3/"
     let imageBaseURL = "https://image.tmdb.org/t/p/w92"
+    let largeImageBaseURL = "https://image.tmdb.org/t/p/w185"
     let apiURLLang = "&language=en-US"
     let apiURLPage = "&page="
     private let apiURLPopular = "movie/popular?"
@@ -32,6 +41,7 @@ class MoviesViewController: UIViewController {
     
     var getPopular: Bool = true
     var currentPage: Int = 1
+    var totalPages: Int = 10
     
     var movieList: [Movie] = []
     var imageCache: [UIImage] = []
@@ -39,8 +49,10 @@ class MoviesViewController: UIViewController {
     var loading: Bool = false
     
     var currentQuery: String {
-        return "https://api.themoviedb.org/3/search/movie?api_key=d5d50f98654e01d24371f44ad6fa09ee&language=en-US&query=\(currentSearch)&page=1&include_adult=false"
+        return "https://api.themoviedb.org/3/search/movie?api_key=d5d50f98654e01d24371f44ad6fa09ee&language=en-US&query=\(currentSearch)&page=\(currentPage)&include_adult=false"
     }
+    
+    let apiQueue = DispatchQueue(label: "apiQueue", qos: .userInitiated)
     
     
     private let itemsPerRow: CGFloat = 3
@@ -49,16 +61,31 @@ class MoviesViewController: UIViewController {
     bottom: 50.0,
     right: 20.0)
     
+    let loadingIndicator = UIActivityIndicatorView()
+    
+//    let screenWidth = movieCollectionView.frame.size.width
+    
     override func viewDidLoad() {
         super.viewDidLoad()
 
         // Do any additional setup after loading the view.
         movieCollectionView.dataSource = self
         movieCollectionView.delegate = self
-        DispatchQueue.global(qos: .userInitiated).async {
+        
+        searchBar.delegate = self
+        searchBar.showsCancelButton = false
+        movieCollectionView.addSubview(loadingIndicator)
+        loadingIndicator.isHidden = false
+        
+//        print(loadingIndicator)
+//        print(movieCollectionView.subviews)
+        setupLoadingIndicator()
+        startLoadingIndicator()
+        apiQueue.async {
             self.getPopular(pageNumber: self.currentPage)
             self.cacheImages()
             DispatchQueue.main.async {
+                self.stopLoadingIndicator()
                 self.movieCollectionView.reloadData()
                 self.loading = false
             }
@@ -77,25 +104,128 @@ class MoviesViewController: UIViewController {
     */
     
     func cacheImages(){
-//        imageCache = []
         for i in imageCache.count ..< movieList.count{
             let movie = movieList[i]
-            guard let posterPath = movie.poster_path else { return }
-            let url = URL(string: imageBaseURL + posterPath)
-            do {
-                guard let url = url else { throw APIError.inavlidURL }
-                let data = try Data(contentsOf: url)
-                let image = UIImage(data: data)
-                guard let thisImage = image else { throw APIError.noImage}
-                imageCache.append(thisImage)
-            } catch let error {
-                print("error caching images: \(error)")
+            
+            if let posterPath = movie.poster_path {
+                let url = URL(string: imageBaseURL + posterPath)
+                do {
+                    guard let url = url else { throw APIError.inavlidURL }
+                    let data = try Data(contentsOf: url)
+                    let image = UIImage(data: data)
+                    guard let thisImage = image else { throw APIError.noImage}
+                    imageCache.append(thisImage)
+                } catch let error {
+                    print("error caching images: \(error)")
+                }
+            }
+            else{
+                let image = UIImage(systemName: "film")
+                imageCache.append(image!)
             }
 
         }
         
     }
+    
+    func setupLoadingIndicator(){
+        let screenWidth = self.view.frame.size.width
+        let indicatorSize = 300
+        loadingIndicator.frame = CGRect(x: (Int(screenWidth) / 2) - (indicatorSize / 2), y: 30, width: indicatorSize, height: indicatorSize)
+    }
+    func startLoadingIndicator(){
+        loadingIndicator.isHidden = false
+        loadingIndicator.startAnimating()
+        movieCollectionView.addSubview(loadingIndicator)
+    }
+    
+    func stopLoadingIndicator(){
+        loadingIndicator.isHidden = true
+        loadingIndicator.stopAnimating()
+        loadingIndicator.removeFromSuperview()
+    }
 
+}
+
+extension MoviesViewController: UISearchBarDelegate{
+    func searchBar(_ searchBar: UISearchBar, textDidChange searchText: String) {
+        currentSearch = searchText.lowercased().replacingOccurrences(of: " ", with: "%20")
+//        movieCollectionView.reloadData()
+//        currentPage = 1
+//        getPopular = false
+//
+//
+//        //query and update collection view
+//        apiQueue.async {
+//            print(Thread.current)
+//            print("search")
+//            self.movieList = []
+//            self.imageCache = []
+//            self.executeQuery(query: self.currentQuery)
+//            print("start cache search")
+//            self.cacheImages()
+//            print(self.imageCache.count)
+//            DispatchQueue.main.async {
+//                self.movieCollectionView.reloadData()
+//                self.loading = false
+//            }
+//        }
+    }
+    
+    func searchBarSearchButtonClicked(_ searchBar: UISearchBar) {
+        
+        //TODO: add case for empty search
+        //TODO: add display for no results
+        searchBar.showsCancelButton = false
+        searchBar.endEditing(true)
+        
+        currentPage = 1
+        getPopular = false
+        
+        
+        //query and update collection view
+        movieList = []
+        imageCache = []
+        movieCollectionView.reloadData()
+        startLoadingIndicator()
+        
+        apiQueue.async {
+            self.executeQuery(query: self.currentQuery)
+            self.cacheImages()
+            DispatchQueue.main.async {
+                self.stopLoadingIndicator()
+                self.movieCollectionView.reloadData()
+                self.loading = false
+            }
+        }
+    }
+    
+    func searchBarTextDidBeginEditing(_ searchBar: UISearchBar) {
+        searchBar.showsCancelButton = true
+    }
+    
+    func searchBarCancelButtonClicked(_ searchBar: UISearchBar) {
+//        movieCollectionView.reloadData()
+        searchBar.text = ""
+        searchBar.showsCancelButton = false
+        searchBar.endEditing(true)
+        currentPage = 1
+        getPopular = true
+        movieList = []
+        imageCache = []
+        movieCollectionView.reloadData()
+        startLoadingIndicator()
+        apiQueue.async {
+            self.getPopular(pageNumber: self.currentPage)
+            self.cacheImages()
+            
+            DispatchQueue.main.async {
+                self.stopLoadingIndicator()
+                self.movieCollectionView.reloadData()
+                self.loading = false
+            }
+        }
+    }
 }
 
 extension MoviesViewController: UICollectionViewDataSource{
@@ -112,12 +242,33 @@ extension MoviesViewController: UICollectionViewDataSource{
             print("error getting api data: \(error)")
         }
         guard let res = response else { return }
+        totalPages = res.total_pages
         movieList.append(contentsOf: res.results)
-        if currentPage < res.total_pages {
-            currentPage = currentPage + 1
-        } else{
-            currentPage = 1
+//        if currentPage < res.total_pages {
+//            currentPage = currentPage + 1
+//        } else{
+//            currentPage = 1
+//        }
+        currentPage = currentPage + 1
+    }
+    
+    func executeQuery(query: String){
+        loading = true
+        var response: APIResults?
+        let url = URL(string: currentQuery)
+        do{
+            guard let url = url else { throw APIError.inavlidURL }
+            let data = try Data(contentsOf: url)
+            response = try JSONDecoder().decode(APIResults.self, from: data)
+        } catch let error{
+            print("error getting query: \(error)")
         }
+        
+        guard let res = response else { return }
+        totalPages = res.total_pages
+        movieList.append(contentsOf: res.results)
+        
+        currentPage += 1
     }
     
     
@@ -128,8 +279,8 @@ extension MoviesViewController: UICollectionViewDataSource{
     func collectionView(_ collectionView: UICollectionView, cellForItemAt indexPath: IndexPath) -> UICollectionViewCell {
         let cell = collectionView.dequeueReusableCell(withReuseIdentifier: "MovieCell", for: indexPath) as! MovieCollectionViewCell
         
-        
         cell.posterImageView.image = imageCache[indexPath.item]
+        cell.movieLabel.text = movieList[indexPath.item].title
         
         return cell
     }
@@ -139,10 +290,7 @@ extension MoviesViewController: UICollectionViewDataSource{
 
 extension MoviesViewController: UICollectionViewDelegateFlowLayout{
     func collectionView(_ collectionView: UICollectionView, layout collectionViewLayout: UICollectionViewLayout, sizeForItemAt indexPath: IndexPath) -> CGSize {
-//        let paddingSpace = sectionInsets.left * (itemsPerRow + 1)
-//        let availableWidth = view.frame.width - paddingSpace
-//        let widthPerItem = availableWidth / itemsPerRow
-        return CGSize(width: 92.0, height: 138.0)
+        return CGSize(width: 92.0, height: 201.0)
     }
     
     func collectionView(_ collectionView: UICollectionView, layout collectionViewLayout: UICollectionViewLayout, insetForSectionAt section: Int) -> UIEdgeInsets {
@@ -158,21 +306,54 @@ extension MoviesViewController: UICollectionViewDelegateFlowLayout{
 extension MoviesViewController: UICollectionViewDelegate {
     func collectionView(_ collectionView: UICollectionView, willDisplay cell: UICollectionViewCell, forItemAt indexPath: IndexPath) {
         let numberOfItems = movieList.count
+        print(indexPath.item)
         if((indexPath.item == numberOfItems - 1) && !loading){
             //get next page
-            DispatchQueue.global(qos: .userInitiated).async {
-                if(self.getPopular){
-                    self.getPopular(pageNumber: self.currentPage)
-                    self.cacheImages()
-                } else{
-                    print("exuctute current query")
-                    
-                }
-                DispatchQueue.main.async {
-                    self.movieCollectionView.reloadData()
-                    self.loading = false
+            if(currentPage <= totalPages){
+                apiQueue.async {
+                    if(self.getPopular){
+                        self.getPopular(pageNumber: self.currentPage)
+                        self.cacheImages()
+                    } else{
+                        print("exuctute current query")
+                        self.executeQuery(query: self.currentQuery)
+                        self.cacheImages()
+                    }
+                    DispatchQueue.main.async {
+                        self.movieCollectionView.reloadData()
+                        self.loading = false
+                    }
                 }
             }
         }
     }
+    
+    func collectionView(_ collectionView: UICollectionView, didSelectItemAt indexPath: IndexPath) {
+        let thisMovie = movieList[indexPath.row]
+        
+        var posterImage: UIImage?
+        
+        if let posterPath = thisMovie.poster_path{
+            let imageURL = URL(string: largeImageBaseURL + posterPath)
+            do {
+                guard let url = imageURL else { throw APIError.inavlidURL }
+                let data = try Data(contentsOf: url)
+                let image = UIImage(data: data)
+                guard let thisImage = image else { throw APIError.noImage}
+                posterImage = thisImage
+            } catch let error {
+                print("error caching images: \(error)")
+            }
+        }else{
+            posterImage = UIImage(systemName: "film")!
+        }
+        
+        
+        let detailVC = MovieDetailViewController(id: thisMovie.id, movieTitle: thisMovie.title, posterImage: posterImage!, releaseDate: thisMovie.release_date, voteAverage: thisMovie.vote_average, overview: thisMovie.overview, voteCount: thisMovie.vote_count)
+        detailVC.title = "details"
+        
+        navigationController?.pushViewController(detailVC, animated: true)
+//        navigationController?.navigationBar.text
+    }
 }
+
