@@ -6,13 +6,14 @@
 //  Copyright © 2020 Taylor Howard. All rights reserved.
 //
 
-
 //TODO: Implement favorites
-//TODO: Creative portion: 1. allow for favorites offline, 2. pagination? 3. ???
+//TODO: Creative portion: 1. allow for favorites offline, 2. pagination? 3. sort?
 //TODO: Context menu
 //TODO: Fix collection view cell movie labels - add a parent uiview to label
+//TODO: custom tab bar image
 
 import UIKit
+import CoreData
 
 enum APIError: Error {
     case inavlidURL
@@ -67,15 +68,15 @@ class MoviesViewController: UIViewController {
     
     override func viewDidLoad() {
         super.viewDidLoad()
-
+//        deleteAllData(entity: "FavoriteMovie")
         // Do any additional setup after loading the view.
         movieCollectionView.dataSource = self
         movieCollectionView.delegate = self
         
         searchBar.delegate = self
         searchBar.showsCancelButton = false
-        movieCollectionView.addSubview(loadingIndicator)
-        loadingIndicator.isHidden = false
+//        movieCollectionView.addSubview(loadingIndicator)
+//        loadingIndicator.isHidden = false
         
 //        print(loadingIndicator)
 //        print(movieCollectionView.subviews)
@@ -102,6 +103,27 @@ class MoviesViewController: UIViewController {
         // Pass the selected object to the new view controller.
     }
     */
+    
+    func deleteAllData(entity: String)
+    {
+        let appDelegate = UIApplication.shared.delegate as! AppDelegate
+        let managedContext = appDelegate.persistentContainer.viewContext
+        let fetchRequest = NSFetchRequest<NSFetchRequestResult>(entityName: entity)
+        fetchRequest.returnsObjectsAsFaults = false
+
+        do
+        {
+            let results = try managedContext.fetch(fetchRequest)
+            for managedObject in results
+            {
+                let managedObjectData:NSManagedObject = managedObject as! NSManagedObject
+                print(managedObjectData)
+                managedContext.delete(managedObjectData)
+            }
+        } catch let error as NSError {
+            print("Detele all data in \(entity) error : \(error) \(error.userInfo)")
+        }
+    }
     
     func cacheImages(){
         for i in imageCache.count ..< movieList.count{
@@ -304,9 +326,9 @@ extension MoviesViewController: UICollectionViewDelegateFlowLayout{
 }
 
 extension MoviesViewController: UICollectionViewDelegate {
+    //load new items when at bottom of page
     func collectionView(_ collectionView: UICollectionView, willDisplay cell: UICollectionViewCell, forItemAt indexPath: IndexPath) {
         let numberOfItems = movieList.count
-        print(indexPath.item)
         if((indexPath.item == numberOfItems - 1) && !loading){
             //get next page
             if(currentPage <= totalPages){
@@ -315,7 +337,6 @@ extension MoviesViewController: UICollectionViewDelegate {
                         self.getPopular(pageNumber: self.currentPage)
                         self.cacheImages()
                     } else{
-                        print("exuctute current query")
                         self.executeQuery(query: self.currentQuery)
                         self.cacheImages()
                     }
@@ -328,16 +349,23 @@ extension MoviesViewController: UICollectionViewDelegate {
         }
     }
     
+    //send user to detail page
     func collectionView(_ collectionView: UICollectionView, didSelectItemAt indexPath: IndexPath) {
-        let thisMovie = movieList[indexPath.row]
+        let thisMovie = movieList[indexPath.item]
         
         var posterImage: UIImage?
+        var largePosterData: Data?
+        var smallPosterData: Data?
         
         if let posterPath = thisMovie.poster_path{
             let imageURL = URL(string: largeImageBaseURL + posterPath)
+            let smallImageURL = URL(string: imageBaseURL + posterPath)
             do {
                 guard let url = imageURL else { throw APIError.inavlidURL }
+                guard let smallImageUrl = smallImageURL else { throw APIError.inavlidURL }
                 let data = try Data(contentsOf: url)
+                smallPosterData = try Data(contentsOf: smallImageUrl)
+                largePosterData = data
                 let image = UIImage(data: data)
                 guard let thisImage = image else { throw APIError.noImage}
                 posterImage = thisImage
@@ -346,11 +374,13 @@ extension MoviesViewController: UICollectionViewDelegate {
             }
         }else{
             posterImage = UIImage(systemName: "film")!
+            smallPosterData = posterImage?.pngData()
+            largePosterData = posterImage?.pngData()
         }
         
         
-        let detailVC = MovieDetailViewController(id: thisMovie.id, movieTitle: thisMovie.title, posterImage: posterImage!, releaseDate: thisMovie.release_date, voteAverage: thisMovie.vote_average, overview: thisMovie.overview, voteCount: thisMovie.vote_count)
-        detailVC.title = "details"
+        let detailVC = MovieDetailViewController(id: thisMovie.id, movieTitle: thisMovie.title, posterImage: posterImage!, releaseDate: thisMovie.release_date, voteAverage: thisMovie.vote_average, overview: thisMovie.overview, voteCount: thisMovie.vote_count, smallImageData: smallPosterData!, largeImageData: largePosterData!)
+        detailVC.title = title
         
         navigationController?.pushViewController(detailVC, animated: true)
 //        navigationController?.navigationBar.text
