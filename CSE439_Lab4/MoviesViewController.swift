@@ -6,12 +6,6 @@
 //  Copyright © 2020 Taylor Howard. All rights reserved.
 //
 
-//TODO: Implement favorites
-//TODO: Creative portion: 1. allow for favorites offline, 2. pagination? 3. sort?
-//TODO: Context menu
-//TODO: Fix collection view cell movie labels - add a parent uiview to label
-//TODO: custom tab bar image
-
 import UIKit
 import CoreData
 
@@ -75,6 +69,9 @@ class MoviesViewController: UIViewController {
         
         searchBar.delegate = self
         searchBar.showsCancelButton = false
+        
+        let interaction = UIContextMenuInteraction(delegate: self)
+        view.addInteraction(interaction)
 //        movieCollectionView.addSubview(loadingIndicator)
 //        loadingIndicator.isHidden = false
         
@@ -119,6 +116,7 @@ class MoviesViewController: UIViewController {
                 let managedObjectData:NSManagedObject = managedObject as! NSManagedObject
                 print(managedObjectData)
                 managedContext.delete(managedObjectData)
+                try managedContext.save()
             }
         } catch let error as NSError {
             print("Detele all data in \(entity) error : \(error) \(error.userInfo)")
@@ -126,27 +124,31 @@ class MoviesViewController: UIViewController {
     }
     
     func cacheImages(){
-        for i in imageCache.count ..< movieList.count{
-            let movie = movieList[i]
-            
-            if let posterPath = movie.poster_path {
-                let url = URL(string: imageBaseURL + posterPath)
-                do {
-                    guard let url = url else { throw APIError.inavlidURL }
-                    let data = try Data(contentsOf: url)
-                    let image = UIImage(data: data)
-                    guard let thisImage = image else { throw APIError.noImage}
-                    imageCache.append(thisImage)
-                } catch let error {
-                    print("error caching images: \(error)")
+//        print(movieList)
+        if(imageCache.count < movieList.count){
+            for i in imageCache.count ..< movieList.count{
+                let movie = movieList[i]
+                
+                if let posterPath = movie.poster_path {
+                    let url = URL(string: imageBaseURL + posterPath)
+                    do {
+                        guard let url = url else { throw APIError.inavlidURL }
+                        let data = try Data(contentsOf: url)
+                        let image = UIImage(data: data)
+                        guard let thisImage = image else { throw APIError.noImage}
+                        imageCache.append(thisImage)
+                    } catch let error {
+                        print("error caching images: \(error)")
+                    }
                 }
-            }
-            else{
-                let image = UIImage(systemName: "film")
-                imageCache.append(image!)
-            }
+                else{
+                    let image = UIImage(systemName: "film")
+                    imageCache.append(image!)
+                }
 
+            }
         }
+        
         
     }
     
@@ -166,6 +168,78 @@ class MoviesViewController: UIViewController {
         loadingIndicator.stopAnimating()
         loadingIndicator.removeFromSuperview()
     }
+    
+    func checkIsFavorite(id: Int) -> Bool{
+        guard let appDelegate = UIApplication.shared.delegate as? AppDelegate else { return false }
+        let context = appDelegate.persistentContainer.viewContext
+        
+        let fetchRequest = NSFetchRequest<NSManagedObject>(entityName: "FavoriteMovie")
+        fetchRequest.predicate = NSPredicate(format: "id == \(id)")
+        
+        do {
+            let results: [NSManagedObject] = try context.fetch(fetchRequest)
+            if results.count > 0 {
+                return true
+            }else{
+                return false
+            }
+        } catch let error as NSError{
+            print("error fetching from core date \(error)")
+        }
+        return false
+    }
+    
+    func deleteFromFavorites(id: Int){
+        guard let appDelegate = UIApplication.shared.delegate as? AppDelegate else { return }
+        let context = appDelegate.persistentContainer.viewContext
+        
+        let fetchRequest = NSFetchRequest<NSManagedObject>(entityName: "FavoriteMovie")
+        fetchRequest.predicate = NSPredicate(format: "id == \(id)")
+        
+        do {
+            let results: [NSManagedObject] = try context.fetch(fetchRequest)
+            context.delete(results[0])
+            try context.save()
+        } catch let error as NSError{
+            print("error deleting from core data: \(error)")
+        }
+    }
+    
+    func saveToFavorites(title: String, smallPosterImage: Data, largePosterImage: Data, releaseDate: String, voteAverage: Double, overview: String, id: Int){
+            
+            guard let appDelegate = UIApplication.shared.delegate as? AppDelegate else { return }
+            
+            let context = appDelegate.persistentContainer.viewContext
+                    
+            let entity = NSEntityDescription.entity(forEntityName: "FavoriteMovie", in: context)
+            
+            let favoritedMovie = NSManagedObject(entity: entity!, insertInto: context)
+            
+            
+            let dateFormatter = DateFormatter()
+            dateFormatter.locale = Locale(identifier: "en_US_POSIX") // set locale to reliable US_POSIX
+            dateFormatter.dateFormat = "yyyy-MM-dd"
+            let date = dateFormatter.date(from:releaseDate)!
+            dateFormatter.dateFormat = "MM/dd/yyyy"
+    //        let formattedReleaseDate = dateFormatter.string(from: date)
+            
+            
+            favoritedMovie.setValue(title, forKey: "title")
+            favoritedMovie.setValue(smallPosterImage, forKey: "smallPosterImage")
+            favoritedMovie.setValue(largePosterImage, forKey: "largePosterImage")
+            favoritedMovie.setValue(date, forKey: "releaseDate")
+            favoritedMovie.setValue(voteAverage, forKey: "voteAverage")
+            favoritedMovie.setValue(overview, forKey: "overview")
+            favoritedMovie.setValue(id, forKey: "id")
+            
+            do {
+                try context.save()
+            } catch let error{
+                print("Failed saving to core data: \(error)")
+            }
+            print("saved to core data")
+        }
+    
 
 }
 
@@ -198,6 +272,9 @@ extension MoviesViewController: UISearchBarDelegate{
         
         //TODO: add case for empty search
         //TODO: add display for no results
+        apiQueue.sync {
+            Thread.current.cancel()
+        }
         searchBar.showsCancelButton = false
         searchBar.endEditing(true)
         
@@ -212,7 +289,15 @@ extension MoviesViewController: UISearchBarDelegate{
         startLoadingIndicator()
         
         apiQueue.async {
-            self.executeQuery(query: self.currentQuery)
+            
+            self.movieList = []
+            self.imageCache = []
+            if(self.currentSearch == ""){
+                self.getPopular = true
+                self.getPopular(pageNumber: self.currentPage)
+            }else{
+                self.executeQuery(query: self.currentQuery)
+            }
             self.cacheImages()
             DispatchQueue.main.async {
                 self.stopLoadingIndicator()
@@ -228,6 +313,9 @@ extension MoviesViewController: UISearchBarDelegate{
     
     func searchBarCancelButtonClicked(_ searchBar: UISearchBar) {
 //        movieCollectionView.reloadData()
+        apiQueue.sync {
+            Thread.current.cancel()
+        }
         searchBar.text = ""
         searchBar.showsCancelButton = false
         searchBar.endEditing(true)
@@ -238,6 +326,9 @@ extension MoviesViewController: UISearchBarDelegate{
         movieCollectionView.reloadData()
         startLoadingIndicator()
         apiQueue.async {
+            
+            self.movieList = []
+            self.imageCache = []
             self.getPopular(pageNumber: self.currentPage)
             self.cacheImages()
             
@@ -387,3 +478,57 @@ extension MoviesViewController: UICollectionViewDelegate {
     }
 }
 
+extension MoviesViewController: UIContextMenuInteractionDelegate{
+    func contextMenuInteraction(_ interaction: UIContextMenuInteraction, configurationForMenuAtLocation location: CGPoint) -> UIContextMenuConfiguration? {
+        return nil
+    }
+    
+    func collectionView(_ collectionView: UICollectionView, contextMenuConfigurationForItemAt indexPath: IndexPath, point: CGPoint) -> UIContextMenuConfiguration? {
+        let configuration = UIContextMenuConfiguration(identifier: nil, previewProvider: nil){ action in
+            //TODO: change this to be add/remove from favorites
+            let movie = self.movieList[indexPath.item]
+            
+            let isFavorited = self.checkIsFavorite(id: movie.id)
+            //check if move is in favorites
+            
+            //add/remove
+            if(isFavorited){
+                let favoritesButton = UIAction(title: "Remove From Favorites", image: UIImage(systemName: "star.fill"), identifier: UIAction.Identifier(rawValue: "favorite")) {_ in
+                    self.deleteFromFavorites(id: movie.id)
+                    self.dismiss(animated: true)
+                }
+                
+                return UIMenu(title: movie.title, image: nil, identifier: nil, children: [favoritesButton])
+            }else{
+                let favoritesButton = UIAction(title: "Add To Favorites", image: UIImage(systemName: "star"), identifier: UIAction.Identifier(rawValue: "favorite")) {_ in
+                    var largePosterData: Data?
+                    var smallPosterData: Data?
+                    
+                    if let posterPath = movie.poster_path{
+                        let imageURL = URL(string: self.largeImageBaseURL + posterPath)
+                        let smallImageURL = URL(string: self.imageBaseURL + posterPath)
+                        do {
+                            guard let url = imageURL else { throw APIError.inavlidURL }
+                            guard let smallImageUrl = smallImageURL else { throw APIError.inavlidURL }
+                            smallPosterData = try Data(contentsOf: smallImageUrl)
+                            largePosterData = try Data(contentsOf: url)
+                        } catch let error {
+                            print("error caching images: \(error)")
+                        }
+                    }else{
+                        let image = UIImage(systemName: "film")!
+                        smallPosterData = image.pngData()
+                        largePosterData = image.pngData()
+                    }
+                    
+                    self.saveToFavorites(title: movie.title, smallPosterImage: smallPosterData!, largePosterImage: largePosterData!, releaseDate: movie.release_date, voteAverage: movie.vote_average, overview: movie.overview, id: movie.id)
+                    self.dismiss(animated: true)
+                }
+                
+                return UIMenu(title: movie.title, image: nil, identifier: nil, children: [favoritesButton])
+            }
+        }
+        
+        return configuration
+    }
+}

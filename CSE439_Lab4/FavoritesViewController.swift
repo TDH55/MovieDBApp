@@ -37,6 +37,8 @@ class FavoritesViewController: UIViewController {
         // Do any additional setup after loading the view.
         favoritesCollectionView.dataSource = self
         favoritesCollectionView.delegate = self
+        let interaction = UIContextMenuInteraction(delegate: self)
+        view.addInteraction(interaction)
         getFavorites()
         favoritesCollectionView.reloadData()
     }
@@ -100,6 +102,22 @@ class FavoritesViewController: UIViewController {
             images.append(smallPosterImage)
         }
     }
+    
+    func deleteFromFavorites(id: Int){
+        guard let appDelegate = UIApplication.shared.delegate as? AppDelegate else { return }
+        let context = appDelegate.persistentContainer.viewContext
+        
+        let fetchRequest = NSFetchRequest<NSManagedObject>(entityName: "FavoriteMovie")
+        fetchRequest.predicate = NSPredicate(format: "id == \(id)")
+        
+        do {
+            let results: [NSManagedObject] = try context.fetch(fetchRequest)
+            context.delete(results[0])
+            try context.save()
+        } catch let error as NSError{
+            print("error deleting from core data: \(error)")
+        }
+    }
 
 }
 
@@ -152,5 +170,27 @@ extension FavoritesViewController: UICollectionViewDelegate{
         
         navigationController?.pushViewController(detailVC, animated: true)
         
+    }
+}
+
+extension FavoritesViewController: UIContextMenuInteractionDelegate{
+    func contextMenuInteraction(_ interaction: UIContextMenuInteraction, configurationForMenuAtLocation location: CGPoint) -> UIContextMenuConfiguration? {
+        return nil
+    }
+    
+    func collectionView(_ collectionView: UICollectionView, contextMenuConfigurationForItemAt indexPath: IndexPath, point: CGPoint) -> UIContextMenuConfiguration? {
+        
+        let configuration = UIContextMenuConfiguration(identifier: nil, previewProvider: nil) { action in
+            let movie = self.movieList[indexPath.item]
+            let favoritesButton = UIAction(title: "Remove From Favorites", image: UIImage(systemName: "star.fill"), identifier: UIAction.Identifier(rawValue: "favorite")) {_ in
+                self.deleteFromFavorites(id: movie.value(forKey: "id") as! Int)
+                self.dismiss(animated: true)
+                self.checkIfUpdated()
+            }
+            
+            return UIMenu(title: movie.value(forKey: "title") as! String, image: nil, identifier: nil, children: [favoritesButton])
+        }
+        
+        return configuration
     }
 }
